@@ -89,6 +89,16 @@ resource "aws_route_table_association" "default_subnet_assoc" {
   route_table_id = data.aws_route_table.default_rt.id
 }
 
+resource "aws_route_table_association" "subnet_b_assoc" {
+  subnet_id      = aws_subnet.subnet_b.id
+  route_table_id = data.aws_route_table.default_rt.id
+}
+
+resource "aws_route_table_association" "subnet_c_assoc" {
+  subnet_id      = aws_subnet.subnet_c.id
+  route_table_id = data.aws_route_table.default_rt.id
+}
+
 resource "aws_ecr_repository" "backend_repo" {
   name          = "multi-env-backend-${var.env}"
   force_delete  = true
@@ -96,6 +106,11 @@ resource "aws_ecr_repository" "backend_repo" {
 
 resource "aws_ecs_cluster" "app_cluster" {
   name = "multi-env-cluster-${var.env}"
+
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
 }
 
 resource "aws_iam_role" "ecs_task_execution_role" {
@@ -103,17 +118,26 @@ resource "aws_iam_role" "ecs_task_execution_role" {
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
   })
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_task_execution_policy" {
   role       = aws_iam_role.ecs_task_execution_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_ssm_exec_policy" {
+  role       = aws_iam_role.ecs_task_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "aws_lb" "app_alb" {
@@ -154,6 +178,7 @@ resource "aws_iam_role_policy_attachment" "cloudwatch_logs_policy" {
   role       = aws_iam_role.ecs_task_execution_role.name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
 }
+
 resource "aws_lb_listener" "app_listener" {
   load_balancer_arn = aws_lb.app_alb.arn
   port              = 80
@@ -165,6 +190,28 @@ resource "aws_lb_listener" "app_listener" {
   }
 }
 
+resource "aws_iam_role" "ecs_task_role" {
+  name = "ecsTaskRole-${var.env}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_task_role_ssm" {
+  role       = aws_iam_role.ecs_task_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess"
+}
+
 resource "aws_ecs_task_definition" "backend_task" {
   family                   = "backend-task-${var.env}"
   network_mode             = "awsvpc"
@@ -172,25 +219,32 @@ resource "aws_ecs_task_definition" "backend_task" {
   cpu                      = 256
   memory                   = 512
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
 
   container_definitions = jsonencode([{
     name      = "backend-app"
     image     = "${aws_ecr_repository.backend_repo.repository_url}:latest"
     essential = true
-    portMappings = [{
-      containerPort = 80
-      hostPort      = 80
-    }],
+    portMappings = [
+      {
+        containerPort = 80
+        hostPort      = 80
+      }
+    ],
     logConfiguration = {
-      logDriver = "awslogs"
+      logDriver = "awslogs",
       options = {
-        awslogs-group         = aws_cloudwatch_log_group.backend_log_group.name
-        awslogs-region        = var.aws_region
+        awslogs-group         = aws_cloudwatch_log_group.backend_log_group.name,
+        awslogs-region        = var.aws_region,
         awslogs-stream-prefix = "ecs"
       }
+    },
+    linuxParameters = {
+      initProcessEnabled = true
     }
   }])
 }
+
 
 resource "aws_ecs_service" "backend_service" {
   name            = "backend-service-${var.env}"
@@ -198,6 +252,8 @@ resource "aws_ecs_service" "backend_service" {
   task_definition = aws_ecs_task_definition.backend_task.arn
   launch_type     = "FARGATE"
   desired_count   = 1
+
+  enable_execute_command = true
 
   network_configuration {
     subnets         = [
@@ -218,4 +274,3 @@ resource "aws_ecs_service" "backend_service" {
   deployment_minimum_healthy_percent = 50
   deployment_maximum_percent         = 200
 }
-
