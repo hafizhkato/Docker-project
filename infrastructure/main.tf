@@ -70,8 +70,8 @@ resource "aws_security_group" "backend_sg" {
   description = "Allow HTTP traffic to backend"
 
   ingress {
-    from_port       = 3000
-    to_port         = 3000
+    from_port       = 80
+    to_port         = 80
     protocol        = "tcp"
     security_groups = [aws_security_group.alb_sg.id]
   }
@@ -130,7 +130,7 @@ resource "aws_lb" "app_alb" {
 
 resource "aws_lb_target_group" "app_tg" {
   name        = "app-tg-${var.env}"
-  port        = 3000
+  port        = 80
   protocol    = "HTTP"
   target_type = "ip"
   vpc_id      = data.aws_vpc.default.id
@@ -145,6 +145,15 @@ resource "aws_lb_target_group" "app_tg" {
   }
 }
 
+resource "aws_cloudwatch_log_group" "backend_log_group" {
+  name              = "/ecs/backend-app-${var.env}"
+  retention_in_days = 7
+}
+
+resource "aws_iam_role_policy_attachment" "cloudwatch_logs_policy" {
+  role       = aws_iam_role.ecs_task_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+}
 resource "aws_lb_listener" "app_listener" {
   load_balancer_arn = aws_lb.app_alb.arn
   port              = 80
@@ -169,9 +178,17 @@ resource "aws_ecs_task_definition" "backend_task" {
     image     = "${aws_ecr_repository.backend_repo.repository_url}:latest"
     essential = true
     portMappings = [{
-      containerPort = 3000
-      hostPort      = 3000
-    }]
+      containerPort = 80
+      hostPort      = 80
+    }],
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.backend_log_group.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "ecs"
+      }
+    }
   }])
 }
 
@@ -189,14 +206,16 @@ resource "aws_ecs_service" "backend_service" {
       aws_subnet.subnet_c.id
     ]
     security_groups = [aws_security_group.backend_sg.id]
+    assign_public_ip = true
   }
 
   load_balancer {
     target_group_arn = aws_lb_target_group.app_tg.arn
     container_name   = "backend-app"
-    container_port   = 3000
+    container_port   = 80
   }
 
   deployment_minimum_healthy_percent = 50
   deployment_maximum_percent         = 200
 }
+
