@@ -3,7 +3,7 @@ name: Build and Push Docker Image to ECR
 on:
   push:
     branches:
-      - dev
+      - vite-push
 
 env:
   AWS_REGION: ap-southeast-1
