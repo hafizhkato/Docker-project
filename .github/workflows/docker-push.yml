@@ -31,7 +31,7 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t $ECR_REPOSITORY:${{ github.sha }} ./vite-react-app
+          docker build -t $ECR_REPOSITORY:${{ github.sha }} ./my-vite-app
       
       - name: Tag Docker image
         run: |
