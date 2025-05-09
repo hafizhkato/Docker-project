@@ -1,0 +1,22 @@
+# Node
+node_modules/
+.env
+*.log
+
+# Docker
+*.tar
+docker-compose.override.yml
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+terraform.tfvars
+.terraform.lock.hcl
+
+# System files
+.DS_Store
+*.swp
+
+# VSCode
+.vscode/
